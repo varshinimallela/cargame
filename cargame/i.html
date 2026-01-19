@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dr. Driving - Hand Gesture Edition</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+        
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: 'Orbitron', monospace; 
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            overflow: hidden;
+        }
+        
+        .game-container { 
+            position: relative; 
+            overflow: hidden; 
+            width: 100vw; 
+            height: 100vh;
+        }
+        
+        .hud-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        .speedometer {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            width: 150px;
+            height: 150px;
+            background: radial-gradient(circle, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.6) 100%);
+            border-radius: 50%;
+            border: 4px solid #00ff88;
+            box-shadow: 0 0 20px rgba(0,255,136,0.5);
+        }
+        
+        .gear-indicator {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            background: rgba(0,0,0,0.8);
+            border: 2px solid #00ff88;
+            border-radius: 10px;
+            padding: 15px;
+            color: #00ff88;
+            font-weight: bold;
+            box-shadow: 0 0 15px rgba(0,255,136,0.3);
+        }
+        
+        .mission-hud {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            background: rgba(0,0,0,0.8);
+            border: 2px solid #ff6b35;
+            border-radius: 10px;
+            padding: 15px;
+            color: #ff6b35;
+            font-weight: bold;
+            box-shadow: 0 0 15px rgba(255,107,53,0.3);
+        }
+        
+        .webcam-feed {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 200px;
+            height: 150px;
+            border: 3px solid #00ff88;
+            border-radius: 10px;
+            overflow: hidden;
+            background: rgba(0,0,0,0.8);
+            box-shadow: 0 0 15px rgba(0,255,136,0.3);
+        }
+        
+        .webcam-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        
+        .hand-debug {
+            position: absolute;
+            bottom: 20px;
+            right: 200px;
+            background: rgba(0,0,0,0.8);
+            color: #00ff88;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 12px;
+            border: 1px solid #00ff88;
+        }
+        
+        .fuel-gauge {
+            position: absolute;
+            top: 30px;
+            right: 250px;
+            width: 200px;
+            height: 20px;
+            background: rgba(0,0,0,0.8);
+            border: 2px solid #00ff88;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .minimap {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            width: 150px;
+            height: 150px;
+            background: rgba(0,0,0,0.8);
+            border: 2px solid #00ff88;
+            border-radius: 10px;
+            margin-top: 170px;
+        }
+        
+        .parking-spot {
+            border: 3px dashed #ffff00;
+            background: rgba(255,255,0,0.2);
+        }
+        
+        .checkpoint {
+            background: radial-gradient(circle, rgba(0,255,136,0.6) 0%, rgba(0,255,136,0.1) 100%);
+            border: 2px solid #00ff88;
+        }
+        
+        .ai-car {
+            background: linear-gradient(45deg, #ff4757, #ff3742);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(255,71,87,0.4);
+        }
+        
+        .player-car {
+            background: linear-gradient(45deg, #3742fa, #2f3542);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(55,66,250,0.6);
+        }
+        
+        .road-texture {
+            background: 
+                repeating-linear-gradient(
+                    90deg,
+                    #4a4a4a 0px,
+                    #4a4a4a 10px,
+                    #555555 10px,
+                    #555555 20px
+                );
+        }
+        
+        .lane-marking {
+            background: repeating-linear-gradient(
+                0deg,
+                transparent 0px,
+                transparent 20px,
+                #ffffff 20px,
+                #ffffff 40px
+            );
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        // Game constants
+        const CANVAS_WIDTH = window.innerWidth;
+        const CANVAS_HEIGHT = window.innerHeight;
+        const CAR_WIDTH = 40;
+        const CAR_HEIGHT = 80;
+        const MAX_SPEED = 12;
+        const ACCELERATION = 0.4;
+        const BRAKE_FORCE = 0.6;
+        const FRICTION = 0.92;
+        const TURN_SPEED = 0.06;
+        const DRIFT_FACTOR = 0.85;
+
+        // Game modes
+        const GAME_MODES = {
+            PARKING: 'parking',
+            CHECKPOINT: 'checkpoint',
+            FREE_DRIVE: 'free_drive',
+            TIME_TRIAL: 'time_trial'
+        };
+
+        // Sound system using Web Audio API
+        const createAudioSystem = () => {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            const createTone = (frequency, duration, type = 'sine', volume = 0.1) => {
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+                oscillator.type = type;
+                
+                gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + duration);
+            };
+
+            return {
+                playEngine: (speed) => {
+                    const frequency = 60 + (speed * 20);
+                    createTone(frequency, 0.1, 'sawtooth', 0.05);
+                },
+                playBrake: () => createTone(150, 0.3, 'square', 0.08),
+                playCollision: () => createTone(200, 0.5, 'square', 0.15),
+                playHorn: () => createTone(440, 0.8, 'square', 0.12),
+                playCheckpoint: () => createTone(800, 0.4, 'sine', 0.1),
+                playSuccess: () => {
+                    createTone(523, 0.2, 'sine', 0.1);
+                    setTimeout(() => createTone(659, 0.2, 'sine', 0.1), 200);
+                    setTimeout(() => createTone(784, 0.4, 'sine', 0.1), 400);
+                }
+            };
+        };
+
+        const DrDrivingGame = () => {
+            const canvasRef = useRef(null);
+            const videoRef = useRef(null);
+            const animationRef = useRef(null);
+            const handsRef = useRef(null);
+            const cameraRef = useRef(null);
+            const audioRef = useRef(null);
+
+            const [gameState, setGameState] = useState({
+                isPlaying: false,
+                isPaused: false,
+                mode: GAME_MODES.PARKING,
+                score: 0,
+                time: 0,
+                fuel: 100,
+                gear: 'P',
+                speed: 0,
+                missionComplete: false,
+                missionText: 'Park in the yellow zone',
+                lives: 3
+            });
+
+            const [handGestures, setHandGestures] = useState({
+                leftHand: null,
+                rightHand: null,
+                steering: 0,
+                throttle: 0,
+                brake: 0,
+                horn: false
+            });
+
+            const [cameraEnabled, setCameraEnabled] = useState(true);
+            const [useMouseControl, setUseMouseControl] = useState(false);
+            const [mouseControls, setMouseControls] = useState({ x: 0, y: 0 });
+
+            const gameObjectsRef = useRef({
+                car: {
+                    x: CANVAS_WIDTH / 2,
+                    y: CANVAS_HEIGHT - 150,
+                    angle: 0,
+                    speed: 0,
+                    velocityX: 0,
+                    velocityY: 0,
+                    driftAngle: 0
+                },
+                aiCars: [],
+                obstacles: [],
+                checkpoints: [],
+                parkingSpots: [],
+                roads: [],
+                camera: { x: 0, y: 0 },
+                lastEngineSound: 0,
+                missionTimer: 0,
+                checkpointIndex: 0
+            });
+
+            // Initialize MediaPipe Hands
+            useEffect(() => {
+                const initializeHandTracking = async () => {
+                    try {
+                        audioRef.current = createAudioSystem();
+
+                        if (!cameraEnabled) return;
+
+                        const hands = new Hands({
+                            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                        });
+
+                        hands.setOptions({
+                            maxNumHands: 2,
+                            modelComplexity: 1,
+                            minDetectionConfidence: 0.7,
+                            minTrackingConfidence: 0.5
+                        });
+
+                        hands.onResults(onHandResults);
+                        handsRef.current = hands;
+
+                        const camera = new Camera(videoRef.current, {
+                            onFrame: async () => {
+                                if (handsRef.current && videoRef.current) {
+                                    await handsRef.current.send({ image: videoRef.current });
+                                }
+                            },
+                            width: 640,
+                            height: 480
+                        });
+
+                        cameraRef.current = camera;
+                        camera.start();
+
+                    } catch (error) {
+                        console.error('Error initializing hand tracking:', error);
+                        setCameraEnabled(false);
+                        setUseMouseControl(true);
+                    }
+                };
+
+                initializeHandTracking();
+
+                return () => {
+                    if (cameraRef.current) {
+                        cameraRef.current.stop();
+                    }
+                };
+            }, [cameraEnabled]);
+
+            const onHandResults = useCallback((results) => {
+                if (!results.multiHandLandmarks || !results.multiHandedness) return;
+
+                let leftHand = null;
+                let rightHand = null;
+
+                results.multiHandedness.forEach((handedness, index) => {
+                    const landmarks = results.multiHandLandmarks[index];
+                    const label = handedness.label;
+
+                    if (label === 'Left') {
+                        leftHand = landmarks;
+                    } else if (label === 'Right') {
+                        rightHand = landmarks;
+                    }
+                });
+
+                // Calculate steering from left hand rotation
+                let steering = 0;
+                if (leftHand) {
+                    const wrist = leftHand[0];
+                    const middleFinger = leftHand[12];
+                    const angle = Math.atan2(middleFinger.y - wrist.y, middleFinger.x - wrist.x);
+                    steering = Math.max(-1, Math.min(1, (angle + Math.PI/2) * 1.5));
+                }
+
+                // Calculate throttle and brake from right hand
+                let throttle = 0;
+                let brake = 0;
+                let horn = false;
+                
+                if (rightHand) {
+                    const wrist = rightHand[0];
+                    const middleFinger = rightHand[12];
+                    const thumb = rightHand[4];
+                    
+                    // Vertical position for throttle/brake
+                    const verticalPos = (0.5 - wrist.y) * 2;
+                    if (verticalPos > 0.2) {
+                        throttle = Math.min(1, verticalPos);
+                    } else if (verticalPos < -0.2) {
+                        brake = Math.min(1, -verticalPos);
+                    }
+                    
+                    // Detect horn gesture (thumb and middle finger close)
+                    const thumbMiddleDistance = Math.sqrt(
+                        Math.pow(thumb.x - middleFinger.x, 2) + 
+                        Math.pow(thumb.y - middleFinger.y, 2)
+                    );
+                    horn = thumbMiddleDistance < 0.05;
+                }
+
+                setHandGestures({
+                    leftHand,
+                    rightHand,
+                    steering,
+                    throttle,
+                    brake,
+                    horn
+                });
+            }, []);
+
+            // Mouse control handlers
+            const handleMouseMove = useCallback((e) => {
+                if (!useMouseControl) return;
+                
+                const rect = canvasRef.current.getBoundingClientRect();
+                const x = (e.clientX - rect.left) / rect.width;
+                const y = (e.clientY - rect.top) / rect.height;
+                
+                setMouseControls({ x, y });
+                
+                // Convert mouse position to steering and throttle
+                const steering = (x - 0.5) * 2;
+                const throttle = Math.max(0, (0.8 - y) * 2);
+                const brake = Math.max(0, (y - 0.8) * 5);
+                
+                setHandGestures(prev => ({
+                    ...prev,
+                    steering,
+                    throttle,
+                    brake,
+                    horn: false
+                }));
+            }, [useMouseControl]);
+
+            // Initialize game world
+            const initializeGame = useCallback(() => {
+                const gameObjects = gameObjectsRef.current;
+                
+                // Reset car
+                gameObjects.car = {
+                    x: CANVAS_WIDTH / 2,
+                    y: CANVAS_HEIGHT - 150,
+                    angle: 0,
+                    speed: 0,
+                    velocityX: 0,
+                    velocityY: 0,
+                    driftAngle: 0
+                };
+
+                // Create road network
+                gameObjects.roads = [
+                    { x: 0, y: CANVAS_HEIGHT - 200, width: CANVAS_WIDTH, height: 150 },
+                    { x: CANVAS_WIDTH / 2 - 75, y: 0, width: 150, height: CANVAS_HEIGHT - 200 },
+                    { x: 0, y: 200, width: CANVAS_WIDTH / 2, height: 150 },
+                    { x: CANVAS_WIDTH / 2, y: 400, width: CANVAS_WIDTH / 2, height: 150 }
+                ];
+
+                // Initialize based on game mode
+                if (gameState.mode === GAME_MODES.PARKING) {
+                    gameObjects.parkingSpots = [
+                        { 
+                            x: CANVAS_WIDTH / 2 - 100, 
+                            y: 100, 
+                            width: 80, 
+                            height: 120, 
+                            occupied: false,
+                            target: true
+                        },
+                        { 
+                            x: CANVAS_WIDTH / 2 + 20, 
+                            y: 100, 
+                            width: 80, 
+                            height: 120, 
+                            occupied: true,
+                            target: false
+                        }
+                    ];
+                    
+                    setGameState(prev => ({
+                        ...prev,
+                        missionText: 'Park in the yellow zone without hitting obstacles'
+                    }));
+                    
+                } else if (gameState.mode === GAME_MODES.CHECKPOINT) {
+                    gameObjects.checkpoints = [
+                        { x: CANVAS_WIDTH / 4, y: CANVAS_HEIGHT / 2, radius: 50, collected: false },
+                        { x: 3 * CANVAS_WIDTH / 4, y: CANVAS_HEIGHT / 4, radius: 50, collected: false },
+                        { x: CANVAS_WIDTH / 2, y: 100, radius: 50, collected: false }
+                    ];
+                    
+                    setGameState(prev => ({
+                        ...prev,
+                        missionText: 'Collect all checkpoints in order'
+                    }));
+                }
+
+                // Add AI cars
+                gameObjects.aiCars = [];
+                for (let i = 0; i < 3; i++) {
+                    gameObjects.aiCars.push({
+                        x: Math.random() * CANVAS_WIDTH,
+                        y: Math.random() * (CANVAS_HEIGHT - 300) + 100,
+                        angle: Math.random() * Math.PI * 2,
+                        speed: 1 + Math.random() * 2,
+                        width: CAR_WIDTH,
+                        height: CAR_HEIGHT,
+                        color: `hsl(${Math.random() * 360}, 70%, 50%)`
+                    });
+                }
+
+                // Add obstacles
+                gameObjects.obstacles = [];
+                for (let i = 0; i < 5; i++) {
+                    gameObjects.obstacles.push({
+                        x: Math.random() * CANVAS_WIDTH,
+                        y: Math.random() * (CANVAS_HEIGHT - 400) + 200,
+                        width: 30,
+                        height: 30,
+                        type: Math.random() > 0.5 ? 'cone' : 'barrier'
+                    });
+                }
+
+                gameObjects.camera = { x: 0, y: 0 };
+                gameObjects.checkpointIndex = 0;
+                gameObjects.missionTimer = 0;
+
+                setGameState(prev => ({
+                    ...prev,
+                    score: 0,
+                    time: 0,
+                    fuel: 100,
+                    gear: 'P',
+                    speed: 0,
+                    missionComplete: false,
+                    lives: 3
+                }));
+            }, [gameState.mode]);
+
+            // Physics and collision detection
+            const updateCarPhysics = useCallback(() => {
+                const car = gameObjectsRef.current.car;
+                const { steering, throttle, brake, horn } = handGestures;
+
+                // Handle horn
+                if (horn && audioRef.current) {
+                    audioRef.current.playHorn();
+                }
+
+                // Apply throttle
+                if (throttle > 0.1) {
+                    car.speed += ACCELERATION * throttle;
+                    setGameState(prev => ({ ...prev, gear: car.speed > 0 ? 'D' : 'R' }));
+                    
+                    // Engine sound
+                    if (Date.now() - gameObjectsRef.current.lastEngineSound > 100) {
+                        if (audioRef.current) {
+                            audioRef.current.playEngine(Math.abs(car.speed));
+                        }
+                        gameObjectsRef.current.lastEngineSound = Date.now();
+                    }
+                }
+
+                // Apply brake
+                if (brake > 0.1) {
+                    car.speed *= (1 - BRAKE_FORCE * brake);
+                    if (Math.abs(car.speed) > 2 && audioRef.current && Math.random() < 0.1) {
+                        audioRef.current.playBrake();
+                    }
+                    setGameState(prev => ({ ...prev, gear: 'B' }));
+                }
+
+                // Apply friction
+                car.speed *= FRICTION;
+                car.speed = Math.max(-MAX_SPEED * 0.6, Math.min(MAX_SPEED, car.speed));
+
+                // Steering with speed-dependent sensitivity
+                if (Math.abs(steering) > 0.1 && Math.abs(car.speed) > 0.5) {
+                    const steeringSensitivity = Math.min(1, Math.abs(car.speed) / MAX_SPEED);
+                    car.angle += steering * TURN_SPEED * steeringSensitivity;
+                    
+                    // Drift calculation
+                    const driftFactor = Math.abs(steering) * Math.abs(car.speed) / MAX_SPEED;
+                    car.driftAngle = car.angle + (steering * driftFactor * 0.3);
+                }
+
+                // Update position with drift
+                const moveAngle = car.driftAngle || car.angle;
+                car.velocityX = Math.sin(moveAngle) * car.speed;
+                car.velocityY = -Math.cos(moveAngle) * car.speed;
+                
+                car.x += car.velocityX;
+                car.y += car.velocityY;
+
+                // Apply drift decay
+                if (car.driftAngle) {
+                    car.driftAngle *= DRIFT_FACTOR;
+                    if (Math.abs(car.driftAngle - car.angle) < 0.01) {
+                        car.driftAngle = 0;
+                    }
+                }
+
+                // Keep car in bounds
+                car.x = Math.max(CAR_WIDTH / 2, Math.min(CANVAS_WIDTH - CAR_WIDTH / 2, car.x));
+                car.y = Math.max(CAR_HEIGHT / 2, Math.min(CANVAS_HEIGHT - CAR_HEIGHT / 2, car.y));
+
+                // Update camera to follow car
+                gameObjectsRef.current.camera.x = car.x - CANVAS_WIDTH / 2;
+                gameObjectsRef.current.camera.y = car.y - CANVAS_HEIGHT / 2;
+
+                // Update game state
+                setGameState(prev => ({
+                    ...prev,
+                    speed: Math.abs(car.speed),
+                    fuel: Math.max(0, prev.fuel - Math.abs(car.speed) * 0.01),
+                    gear: car.speed === 0 ? 'P' : (car.speed > 0 ? 'D' : 'R')
+                }));
+            }, [handGestures]);
+
+            // Collision detection
+            const checkCollisions = useCallback(() => {
+                const car = gameObjectsRef.current.car;
+                const gameObjects = gameObjectsRef.current;
+
+                // Check AI car collisions
+                gameObjects.aiCars.forEach(aiCar => {
+                    const dx = car.x - aiCar.x;
+                    const dy = car.y - aiCar.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < (CAR_WIDTH + aiCar.width) / 2) {
+                        if (audioRef.current) {
+                            audioRef.current.playCollision();
+                        }
+                        
+                        // Bounce effect
+                        car.speed *= -0.3;
+                        car.x += dx * 0.1;
+                        car.y += dy * 0.1;
+                        
+                        setGameState(prev => ({
+                            ...prev,
+                            lives: prev.lives - 1,
+                            score: Math.max(0, prev.score - 50)
+                        }));
+                    }
+                });
+
+                // Check obstacle collisions
+                gameObjects.obstacles.forEach(obstacle => {
+                    const dx = car.x - (obstacle.x + obstacle.width / 2);
+                    const dy = car.y - (obstacle.y + obstacle.height / 2);
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < (CAR_WIDTH + obstacle.width) / 2) {
+                        if (audioRef.current) {
+                            audioRef.current.playCollision();
+                        }
+                        
+                        car.speed *= -0.5;
+                        setGameState(prev => ({
+                            ...prev,
+                            score: Math.max(0, prev.score - 25)
+                        }));
+                    }
+                });
+
+                // Check parking mission
+                if (gameState.mode === GAME_MODES.PARKING) {
+                    gameObjects.parkingSpots.forEach(spot => {
+                        if (spot.target) {
+                            const inSpot = car.x > spot.x && car.x < spot.x + spot.width &&
+                                          car.y > spot.y && car.y < spot.y + spot.height;
+                            
+                            if (inSpot && Math.abs(car.speed) < 0.5) {
+                                if (!gameState.missionComplete) {
+                                    if (audioRef.current) {
+                                        audioRef.current.playSuccess();
+                                    }
+                                    setGameState(prev => ({
+                                        ...prev,
+                                        missionComplete: true,
+                                        score: prev.score + 500,
+                                        missionText: 'Mission Complete! Well parked!'
+                                    }));
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Check checkpoint mission
+                if (gameState.mode === GAME_MODES.CHECKPOINT) {
+                    const currentCheckpoint = gameObjects.checkpoints[gameObjects.checkpointIndex];
+                    if (currentCheckpoint && !currentCheckpoint.collected) {
+                        const dx = car.x - currentCheckpoint.x;
+                        const dy = car.y - currentCheckpoint.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < currentCheckpoint.radius) {
+                            currentCheckpoint.collected = true;
+                            gameObjects.checkpointIndex++;
+                            
+                            if (audioRef.current) {
+                                audioRef.current.playCheckpoint();
+                            }
+                            
+                            setGameState(prev => ({
+                                ...prev,
+                                score: prev.score + 100
+                            }));
+                            
+                            if (gameObjects.checkpointIndex >= gameObjects.checkpoints.length) {
+                                if (audioRef.current) {
+                                    audioRef.current.playSuccess();
+                                }
+                                setGameState(prev => ({
+                                    ...prev,
+                                    missionComplete: true,
+                                    missionText: 'All checkpoints collected!'
+                                }));
+                            }
+                        }
+                    }
+                }
+            }, [gameState.mode, gameState.missionComplete]);
+
+            // Update AI cars
+            const updateAICars = useCallback(() => {
+                const gameObjects = gameObjectsRef.current;
+                
+                gameObjects.aiCars.forEach(aiCar => {
+                    // Simple AI movement
+                    aiCar.x += Math.sin(aiCar.angle) * aiCar.speed;
+                    aiCar.y += -Math.cos(aiCar.angle) * aiCar.speed;
+                    
+                    // Bounce off walls
+                    if (aiCar.x < 0 || aiCar.x > CANVAS_WIDTH) {
+                        aiCar.angle = Math.PI - aiCar.angle;
+                    }
+                    if (aiCar.y < 0 || aiCar.y > CANVAS_HEIGHT) {
+                        aiCar.angle = -aiCar.angle;
+                    }
+                    
+                    // Keep in bounds
+                    aiCar.x = Math.max(0, Math.min(CANVAS_WIDTH, aiCar.x));
+                    aiCar.y = Math.max(0, Math.min(CANVAS_HEIGHT, aiCar.y));
+                    
+                    // Random direction changes
+                    if (Math.random() < 0.01) {
+                        aiCar.angle += (Math.random() - 0.5) * 0.5;
+                    }
+                });
+            }, []);
+
+            // Main game loop
+            const gameLoop = useCallback(() => {
+                if (!gameState.isPlaying || gameState.isPaused) return;
+
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+                // Update physics
+                updateCarPhysics();
+                updateAICars();
+                checkCollisions();
+
+                // Draw road network
+                ctx.fillStyle = '#2c3e50';
+                ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+                gameObjectsRef.current.roads.forEach(road => {
+                    ctx.fillStyle = '#34495e';
+                    ctx.fillRect(road.x, road.y, road.width, road.height);
+                    
+                    // Lane markings
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([20, 20]);
+                    
+                    if (road.width > road.height) {
+                        // Horizontal road
+                        ctx.beginPath();
+                        ctx.moveTo(road.x, road.y + road.height / 2);
+                        ctx.lineTo(road.x + road.width, road.y + road.height / 2);
+                        ctx.stroke();
+                    } else {
+                        // Vertical road
+                        ctx.beginPath();
+                        ctx.moveTo(road.x + road.width / 2, road.y);
+                        ctx.lineTo(road.x + road.width / 2, road.y + road.height);
+                        ctx.stroke();
+                    }
+                });
+                
+                ctx.setLineDash([]);
+
+                // Draw parking spots
+                gameObjectsRef.current.parkingSpots.forEach(spot => {
+                    ctx.strokeStyle = spot.target ? '#ffff00' : '#ffffff';
+                    ctx.lineWidth = 3;
+                    ctx.setLineDash([10, 10]);
+                    ctx.strokeRect(spot.x, spot.y, spot.width, spot.height);
+                    
+                    if (spot.target) {
+                        ctx.fillStyle = 'rgba(255, 255, 0, 0.2)';
+                        ctx.fillRect(spot.x, spot.y, spot.width, spot.height);
+                    }
+                });
+                ctx.setLineDash([]);
+
+                // Draw checkpoints
+                gameObjectsRef.current.checkpoints.forEach((checkpoint, index) => {
+                    if (!checkpoint.collected) {
+                        const isNext = index === gameObjectsRef.current.checkpointIndex;
+                        ctx.fillStyle = isNext ? 'rgba(0, 255, 136, 0.6)' : 'rgba(0, 255, 136, 0.3)';
+                        ctx.beginPath();
+                        ctx.arc(checkpoint.x, checkpoint.y, checkpoint.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        ctx.strokeStyle = '#00ff88';
+                        ctx.lineWidth = 3;
+                        ctx.stroke();
+                        
+                        // Checkpoint number
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = 'bold 20px Orbitron';
+                        ctx.textAlign = 'center';
+                        ctx.fillText((index + 1).toString(), checkpoint.x, checkpoint.y + 7);
+                    }
+                });
+
+                // Draw obstacles
+                gameObjectsRef.current.obstacles.forEach(obstacle => {
+                    if (obstacle.type === 'cone') {
+                        ctx.fillStyle = '#ff6b35';
+                        ctx.beginPath();
+                        ctx.moveTo(obstacle.x + obstacle.width / 2, obstacle.y);
+                        ctx.lineTo(obstacle.x, obstacle.y + obstacle.height);
+                        ctx.lineTo(obstacle.x + obstacle.width, obstacle.y + obstacle.height);
+                        ctx.closePath();
+                        ctx.fill();
+                    } else {
+                        ctx.fillStyle = '#e74c3c';
+                        ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                    }
+                });
+
+                // Draw AI cars
+                gameObjectsRef.current.aiCars.forEach(aiCar => {
+                    ctx.save();
+                    ctx.translate(aiCar.x, aiCar.y);
+                    ctx.rotate(aiCar.angle);
+                    
+                    // Car body
+                    ctx.fillStyle = aiCar.color;
+                    ctx.fillRect(-aiCar.width / 2, -aiCar.height / 2, aiCar.width, aiCar.height);
+                    
+                    // Car details
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(-aiCar.width / 4, -aiCar.height / 2 + 5, aiCar.width / 2, 8);
+                    ctx.fillRect(-aiCar.width / 4, aiCar.height / 2 - 13, aiCar.width / 2, 8);
+                    
+                    ctx.restore();
+                });
+
+                // Draw player car
+                const car = gameObjectsRef.current.car;
+                ctx.save();
+                ctx.translate(car.x, car.y);
+                ctx.rotate(car.angle);
+                
+                // Car shadow
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.fillRect(-CAR_WIDTH / 2 + 2, -CAR_HEIGHT / 2 + 2, CAR_WIDTH, CAR_HEIGHT);
+                
+                // Car body
+                ctx.fillStyle = '#3742fa';
+                ctx.fillRect(-CAR_WIDTH / 2, -CAR_HEIGHT / 2, CAR_WIDTH, CAR_HEIGHT);
+                
+                // Car details
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(-CAR_WIDTH / 4, -CAR_HEIGHT / 2 + 5, CAR_WIDTH / 2, 10);
+                ctx.fillRect(-CAR_WIDTH / 4, CAR_HEIGHT / 2 - 15, CAR_WIDTH / 2, 10);
+                
+                // Headlights
+                ctx.fillStyle = '#ffff88';
+                ctx.fillRect(-CAR_WIDTH / 3, -CAR_HEIGHT / 2, 8, 4);
+                ctx.fillRect(CAR_WIDTH / 3 - 8, -CAR_HEIGHT / 2, 8, 4);
+                
+                ctx.restore();
+
+                // Update timer
+                setGameState(prev => ({
+                    ...prev,
+                    time: prev.time + 1/60
+                }));
+
+                // Check game over conditions
+                if (gameState.fuel <= 0 || gameState.lives <= 0) {
+                    setGameState(prev => ({ ...prev, isPlaying: false }));
+                    return;
+                }
+
+                animationRef.current = requestAnimationFrame(gameLoop);
+            }, [gameState.isPlaying, gameState.isPaused, updateCarPhysics, updateAICars, checkCollisions, gameState.fuel, gameState.lives]);
+
+            // Start game loop
+            useEffect(() => {
+                if (gameState.isPlaying && !gameState.isPaused) {
+                    animationRef.current = requestAnimationFrame(gameLoop);
+                }
+                return () => {
+                    if (animationRef.current) {
+                        cancelAnimationFrame(animationRef.current);
+                    }
+                };
+            }, [gameLoop]);
+
+            // Mouse event listeners
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if (canvas && useMouseControl) {
+                    canvas.addEventListener('mousemove', handleMouseMove);
+                    return () => canvas.removeEventListener('mousemove', handleMouseMove);
+                }
+            }, [handleMouseMove, useMouseControl]);
+
+            const startGame = () => {
+                initializeGame();
+                setGameState(prev => ({ ...prev, isPlaying: true, isPaused: false }));
+            };
+
+            const pauseGame = () => {
+                setGameState(prev => ({ ...prev, isPaused: !prev.isPaused }));
+            };
+
+            const resetGame = () => {
+                setGameState(prev => ({ 
+                    ...prev, 
+                    isPlaying: false, 
+                    isPaused: false,
+                    missionComplete: false
+                }));
+                initializeGame();
+            };
+
+            const changeGameMode = (mode) => {
+                setGameState(prev => ({ ...prev, mode }));
+                resetGame();
+            };
+
+            // HUD Components
+            const Speedometer = () => {
+                const speed = gameState.speed;
+                const speedPercent = speed / MAX_SPEED;
+                const angle = speedPercent * 240 - 120;
+
+                return (
+                    <div className="speedometer">
+                        <svg width="150" height="150" className="absolute inset-0">
+                            <circle cx="75" cy="75" r="60" fill="none" stroke="#333" strokeWidth="4"/>
+                            <circle 
+                                cx="75" 
+                                cy="75" 
+                                r="60" 
+                                fill="none" 
+                                stroke="#00ff88" 
+                                strokeWidth="4"
+                                strokeDasharray={`${speedPercent * 377} 377`}
+                                transform="rotate(-90 75 75)"
+                                className="transition-all duration-100"
+                            />
+                            <line
+                                x1="75"
+                                y1="75"
+                                x2="75"
+                                y2="25"
+                                stroke="#ff6b35"
+                                strokeWidth="3"
+                                transform={`rotate(${angle} 75 75)`}
+                                className="transition-transform duration-100"
+                            />
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-white">{Math.floor(speed * 10)}</div>
+                                <div className="text-xs text-gray-300">km/h</div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const FuelGauge = () => {
+                const fuelPercent = gameState.fuel / 100;
+                return (
+                    <div className="fuel-gauge">
+                        <div 
+                            className="h-full bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 transition-all duration-300"
+                            style={{ width: `${fuelPercent * 100}%` }}
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center text-white text-sm font-bold">
+                            FUEL: {Math.floor(gameState.fuel)}%
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="game-container">
+                    <canvas
+                        ref={canvasRef}
+                        width={CANVAS_WIDTH}
+                        height={CANVAS_HEIGHT}
+                        className="absolute inset-0 bg-gray-800"
+                    />
+
+                    {/* HUD Overlay */}
+                    <div className="hud-overlay">
+                        {/* Webcam Feed */}
+                        {cameraEnabled && (
+                            <div className="webcam-feed">
+                                <video
+                                    ref={videoRef}
+                                    className="webcam-video"
+                                    autoPlay
+                                    muted
+                                    playsInline
+                                />
+                                <div className="absolute bottom-1 left-1 text-xs text-green-400">
+                                    CAMERA
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Hand Debug Info */}
+                        <div className="hand-debug">
+                            <div>Control: {useMouseControl ? 'Mouse' : 'Hand Gestures'}</div>
+                            <div>Steering: {handGestures.steering.toFixed(2)}</div>
+                            <div>Throttle: {handGestures.throttle.toFixed(2)}</div>
+                            <div>Brake: {handGestures.brake.toFixed(2)}</div>
+                            {!useMouseControl && (
+                                <>
+                                    <div>Left Hand: {handGestures.leftHand ? '✓' : '✗'}</div>
+                                    <div>Right Hand: {handGestures.rightHand ? '✓' : '✗'}</div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Mission HUD */}
+                        <div className="mission-hud">
+                            <div className="text-lg font-bold">MISSION</div>
+                            <div className="text-sm">{gameState.missionText}</div>
+                            <div className="text-sm mt-2">
+                                Score: {gameState.score} | Time: {Math.floor(gameState.time)}s
+                            </div>
+                            <div className="text-sm">
+                                Lives: {'❤️'.repeat(gameState.lives)}
+                            </div>
+                        </div>
+
+                        {/* Gear Indicator */}
+                        <div className="gear-indicator">
+                            <div className="text-3xl font-bold">{gameState.gear}</div>
+                            <div className="text-sm">GEAR</div>
+                        </div>
+
+                        {/* Speedometer */}
+                        <Speedometer />
+
+                        {/* Fuel Gauge */}
+                        <FuelGauge />
+                    </div>
+
+                    {/* Game Controls */}
+                    <div className="absolute top-4 right-4 flex gap-2 z-20">
+                        {!gameState.isPlaying ? (
+                            <button
+                                onClick={startGame}
+                                className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold transition-colors"
+                            >
+                                START
+                            </button>
+                        ) : (
+                            <button
+                                onClick={pauseGame}
+                                className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg font-bold transition-colors"
+                            >
+                                {gameState.isPaused ? 'RESUME' : 'PAUSE'}
+                            </button>
+                        )}
+                        <button
+                            onClick={resetGame}
+                            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-bold transition-colors"
+                        >
+                            RESET
+                        </button>
+                        <button
+                            onClick={() => setUseMouseControl(!useMouseControl)}
+                            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-bold transition-colors"
+                        >
+                            {useMouseControl ? '🖱️ MOUSE' : '👋 HANDS'}
+                        </button>
+                    </div>
+
+                    {/* Game Mode Selector */}
+                    <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-2 z-20">
+                        <button
+                            onClick={() => changeGameMode(GAME_MODES.PARKING)}
+                            className={`px-4 py-2 rounded-lg font-bold transition-colors ${
+                                gameState.mode === GAME_MODES.PARKING 
+                                    ? 'bg-orange-500 text-white' 
+                                    : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                            }`}
+                        >
+                            🅿️ PARKING
+                        </button>
+                        <button
+                            onClick={() => changeGameMode(GAME_MODES.CHECKPOINT)}
+                            className={`px-4 py-2 rounded-lg font-bold transition-colors ${
+                                gameState.mode === GAME_MODES.CHECKPOINT 
+                                    ? 'bg-orange-500 text-white' 
+                                    : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                            }`}
+                        >
+                            🎯 CHECKPOINT
+                        </button>
+                        <button
+                            onClick={() => changeGameMode(GAME_MODES.FREE_DRIVE)}
+                            className={`px-4 py-2 rounded-lg font-bold transition-colors ${
+                                gameState.mode === GAME_MODES.FREE_DRIVE 
+                                    ? 'bg-orange-500 text-white' 
+                                    : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                            }`}
+                        >
+                            🚗 FREE DRIVE
+                        </button>
+                    </div>
+
+                    {/* Game Over Screen */}
+                    {!gameState.isPlaying && (gameState.fuel <= 0 || gameState.lives <= 0) && (
+                        <div className="absolute inset-0 bg-black bg-opacity-80 flex items-center justify-center z-30">
+                            <div className="bg-gray-900 border-2 border-red-500 p-8 rounded-lg text-center max-w-md">
+                                <h2 className="text-3xl font-bold text-red-500 mb-4">GAME OVER</h2>
+                                <p className="text-white text-lg mb-2">Final Score: {gameState.score}</p>
+                                <p className="text-white text-lg mb-2">Time: {Math.floor(gameState.time)}s</p>
+                                <p className="text-white text-lg mb-4">
+                                    Reason: {gameState.fuel <= 0 ? 'Out of Fuel' : 'No Lives Left'}
+                                </p>
+                                <button
+                                    onClick={startGame}
+                                    className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-bold transition-colors"
+                                >
+                                    PLAY AGAIN
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Mission Complete Screen */}
+                    {gameState.missionComplete && (
+                        <div className="absolute inset-0 bg-black bg-opacity-80 flex items-center justify-center z-30">
+                            <div className="bg-gray-900 border-2 border-green-500 p-8 rounded-lg text-center max-w-md">
+                                <h2 className="text-3xl font-bold text-green-500 mb-4">MISSION COMPLETE!</h2>
+                                <p className="text-white text-lg mb-2">Score: {gameState.score}</p>
+                                <p className="text-white text-lg mb-2">Time: {Math.floor(gameState.time)}s</p>
+                                <p className="text-white text-lg mb-4">{gameState.missionText}</p>
+                                <div className="flex gap-4 justify-center">
+                                    <button
+                                        onClick={startGame}
+                                        className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-bold transition-colors"
+                                    >
+                                        PLAY AGAIN
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const modes = Object.values(GAME_MODES);
+                                            const currentIndex = modes.indexOf(gameState.mode);
+                                            const nextMode = modes[(currentIndex + 1) % modes.length];
+                                            changeGameMode(nextMode);
+                                        }}
+                                        className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-bold transition-colors"
+                                    >
+                                        NEXT MODE
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Instructions Screen */}
+                    {!gameState.isPlaying && !gameState.missionComplete && gameState.lives > 0 && gameState.fuel > 0 && (
+                        <div className="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center z-30">
+                            <div className="bg-gray-900 border-2 border-blue-500 p-8 rounded-lg text-center max-w-lg">
+                                <h2 className="text-3xl font-bold text-blue-400 mb-6">DR. DRIVING</h2>
+                                <div className="text-left mb-6 text-white">
+                                    <h3 className="text-xl font-bold text-green-400 mb-3">Hand Controls:</h3>
+                                    <p className="mb-2">🤚 <strong>Left Hand:</strong> Rotate to steer left/right</p>
+                                    <p className="mb-2">🤚 <strong>Right Hand:</strong> Move up to accelerate, down to brake</p>
+                                    <p className="mb-2">👌 <strong>Pinch Gesture:</strong> Horn (thumb + middle finger)</p>
+                                    
+                                    <h3 className="text-xl font-bold text-orange-400 mb-3 mt-4">Game Modes:</h3>
+                                    <p className="mb-2">🅿️ <strong>Parking:</strong> Park in the yellow zone</p>
+                                    <p className="mb-2">🎯 <strong>Checkpoint:</strong> Collect all checkpoints in order</p>
+                                    <p className="mb-2">🚗 <strong>Free Drive:</strong> Explore and practice</p>
+                                    
+                                    <h3 className="text-xl font-bold text-red-400 mb-3 mt-4">Tips:</h3>
+                                    <p className="mb-2">• Watch your fuel and lives</p>
+                                    <p className="mb-2">• Avoid collisions with AI cars and obstacles</p>
+                                    <p className="mb-2">• Use mouse control if camera isn't available</p>
+                                </div>
+                                <button
+                                    onClick={startGame}
+                                    className="bg-green-500 hover:bg-green-600 text-white px-8 py-4 rounded-lg font-bold text-xl transition-colors"
+                                >
+                                    START DRIVING!
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.render(<DrDrivingGame />, document.getElementById('root'));
+    </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9712bb67f5dc2e97',t:'MTc1NTUzMzk1OC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
